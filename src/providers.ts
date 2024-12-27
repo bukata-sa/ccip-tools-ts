@@ -87,6 +87,7 @@ export class Providers {
           for (const [env, val] of Object.entries(process.env)) {
             if (env.startsWith('RPC_') && val && RPCS_RE.test(val)) rpcs.add(val)
           }
+          // console.log(rpcs)
           return rpcs
         })
     }

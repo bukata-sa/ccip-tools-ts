@@ -27,7 +27,7 @@ export async function fetchCommitReport(
     timestamp: requestTimestamp,
     lane,
   }: Pick<CCIPRequest, 'lane'> & {
-    message: Pick<CCIPRequest['message'], 'sequenceNumber' | 'sourceChainSelector'>
+    message: Pick<CCIPRequest['message'], 'messageId' | 'sequenceNumber' | 'sourceChainSelector'>
     log: Pick<CCIPRequest['log'], 'address'>
     timestamp?: number
   },
@@ -96,7 +96,7 @@ export async function fetchCommitReport(
   }
 
   throw new Error(
-    `Could not find commit after ${hints?.startBlock ?? requestTimestamp} for sequenceNumber=${message.sequenceNumber}`,
+    `Could not find commit after ${hints?.startBlock ?? requestTimestamp} for sequenceNumber=${message.sequenceNumber} and msgId=${message.messageId}`,
   )
 }
 

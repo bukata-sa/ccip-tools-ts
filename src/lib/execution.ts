@@ -57,6 +57,18 @@ export function calculateManualExecProof(
     }
   })
 
+  // messages.forEach((message, index) => {
+  //   let sourceTokenData = []
+  //   for (let i = 0; i < index; i++) {
+  //     sourceTokenData.push("0x")
+  //   }
+  //   sourceTokenData.push(message.sourceTokenData[0])
+  //   message.sourceTokenData = sourceTokenData 
+  //   // Hash leaf node
+  //   leaves.push(hasher(message))
+  //   seen.add(message.messageId)
+  // })
+
   const missing = messageIds.filter((id) => !seen.has(id))
   if (missing.length > 0) {
     throw new Error(`Could not find messageIds: ${missing.join(', ')}`)
@@ -204,7 +216,7 @@ export async function discoverOffRamp<V extends CCIPVersion>(
         for (const offRamp of offRamps) {
           const contract = await validateOffRamp<V>(runner, offRamp, lane)
           if (contract) {
-            console.debug('Found offRamp', offRamp, 'for lane', lane)
+            console.info('Found offRamp', offRamp, 'for lane', lane, contract.runner)
             return contract
           }
         }
@@ -220,7 +232,7 @@ export async function discoverOffRamp<V extends CCIPVersion>(
 }
 
 async function getOffRampStaticConfig(dest: ContractRunner, address: string) {
-  return lazyCached(`OffRamp ${address}.staticConfig`, async () => {
+  return lazyCached(`OffRamp ${address}.staticConfig ${dest.provider == dest}`, async () => {
     const [type_, version] = await getTypeAndVersion(dest.provider!, address)
     if (type_ != CCIPContractTypeOffRamp)
       throw new Error(`Not an OffRamp: ${address} is "${type_} ${version}"`)
@@ -299,7 +311,7 @@ export async function* fetchExecutionReceipts(
     })
     if (onlyLast) logs.reverse()
     console.debug('fetchExecutionReceipts: found', logs.length, 'logs in', blockRange)
-
+    console.log("fetchExecutionReceipts.dest: ", dest)
     let lastLogBlock: readonly [block: number, timestamp: number] | undefined
     for (const log of logs) {
       try {

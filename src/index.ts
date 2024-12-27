@@ -21,7 +21,7 @@ import { logParsedError } from './utils.js'
 util.inspect.defaultOptions.depth = 6 // print down to tokenAmounts in requests
 // generate:nofail
 // `const VERSION = '${require('./package.json').version}-${require('child_process').execSync('git rev-parse --short HEAD').toString().trim()}'`
-const VERSION = '0.1.3-c92e135'
+const VERSION = '0.1.3-6d16b5e'
 // generate:end
 
 async function main() {
@@ -216,6 +216,12 @@ async function main() {
               string: true,
               describe: 'List of token amounts (on source) to transfer to the receiver',
               example: '0xtoken=0.1',
+            },
+            times: {
+              type: 'number',
+              string: false,
+              describe: 'Times',
+              example: '1',
             },
             wallet: {
               type: 'string',
