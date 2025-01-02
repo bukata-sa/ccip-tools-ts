@@ -311,7 +311,6 @@ export async function* fetchExecutionReceipts(
     })
     if (onlyLast) logs.reverse()
     console.debug('fetchExecutionReceipts: found', logs.length, 'logs in', blockRange)
-    console.log("fetchExecutionReceipts.dest: ", dest)
     let lastLogBlock: readonly [block: number, timestamp: number] | undefined
     for (const log of logs) {
       try {

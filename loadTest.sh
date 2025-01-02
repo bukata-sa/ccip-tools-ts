@@ -3,7 +3,8 @@
 # -----------------------------
 # Configuration
 # -----------------------------
-REPEAT_COUNT=1
+REPEAT_COUNT=8
+BATCH_SIZE=4
 cli="./src/index.ts"
 
 # -----------------------------
@@ -16,15 +17,21 @@ if [[ "$MODE" == "base" ]]; then
   fromChain="ethereum-testnet-sepolia-base-1"
   toChain="ethereum-testnet-holesky"
   router="0xD3b06cEbF099CE7DA4AcCf578aaebFDBd6e88a93"
-  token="0x107Fc7d90484534704dD2A9e24c7BD45DB4dD1B5"
-  RESULTS_FILE="base-eth.json"
+  lbtcToken="0x107Fc7d90484534704dD2A9e24c7BD45DB4dD1B5"
+  usdcToken="0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+  token=$lbtcToken
+  RESULTS_FILE="lbtc-base-eth.json"
 else
   # Default or "eth" mode
   fromChain="ethereum-testnet-holesky"
   toChain="ethereum-testnet-sepolia-base-1"
-  router="0xb9531b46fE8808fB3659e39704953c2B1112DD43"
-  token="0x38A13AB20D15ffbE5A7312d2336EF1552580a4E2"
-  RESULTS_FILE="eth-base.json"
+  sepoliaRouter="0x0BF3dE8c5D3e8A2B34D2BEeB17ABfCeBaf363A59"
+  holeskyRouter="0xb9531b46fE8808fB3659e39704953c2B1112DD43"
+  router=$holeskyRouter
+  lbtcToken="0x38A13AB20D15ffbE5A7312d2336EF1552580a4E2"
+  usdcToken="0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238"
+  token=$lbtcToken
+  RESULTS_FILE="lbtc-eth-base.json"
 fi
 
 echo "=============================="
@@ -95,10 +102,10 @@ if [ ! -f "$RESULTS_FILE" ]; then
     $fromChain \
     $router \
     $toChain \
-    --transfer-tokens $token=0.00000010 \
+    --transfer-tokens $token=0.000001 \
     --allow-out-of-order-exec \
     --format batch \
-    --times 15"
+    --times $BATCH_SIZE"
 
   for ((i = 1; i <= REPEAT_COUNT; i++)); do
     echo "=== Execution #$i ==="
@@ -128,6 +135,7 @@ if [ ! -f "$RESULTS_FILE" ]; then
       echo "res: $res"
       # Immediately update the JSON file (append this array)
       add_transactions "$res"
+      sleep 1m
     else
       echo "No valid JSON found in execution #$i"
     fi
@@ -159,6 +167,9 @@ echo "Reading results from '$RESULTS_FILE'..."
   echo
   echo "=== Checking messages ==="
 # 2) Loop over each transaction object in 'transactions'
+countSuccess=0
+countFailure=0
+countPending=0
 jq -c '.transactions[]' "$RESULTS_FILE" | while IFS= read -r line; do
   msgId=$(echo "$line" | jq -r '.id')
   txHash=$(echo "$line" | jq -r '.tx')
@@ -172,14 +183,19 @@ jq -c '.transactions[]' "$RESULTS_FILE" | while IFS= read -r line; do
   if [ "$state" -eq 2 ] 2>/dev/null; then
     passed=$(( now - receipt_timestamp ))
     echo "Message ID $msgId -> Success (state=2), exec_duration=$exec_duration"
+    countSuccess=$((countSuccess+1))
   elif [ "$state" -eq 3 ] 2>/dev/null; then
     passed=$(( now - receipt_timestamp ))
     echo "Message ID $msgId -> Failure (state=3), exec_duration=$exec_duration"
+    countFailure=$((countFailure+1))
   else
     echo "Message ID $msgId -> Pending or Unknown (state=$state)"
+    countPending=$((countPending+1))
   fi
 done
-
-echo "=========================="
-echo
-echo "All done!"
+# Finally, echo the totals:
+echo "===== Summary ====="
+echo "Total Success: $countSuccess"
+echo "Total Failure: $countFailure"
+echo "Total Pending: $countPending"
+echo "=================="

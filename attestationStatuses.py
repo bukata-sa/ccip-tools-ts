@@ -10,11 +10,11 @@ from web3 import Web3
 # -------------------------
 CHAIN_CONFIG = {
     "eth": {
-        "json_file": "eth-base.json",
+        "json_file": "lbtc-eth-base.json",
         "rpc_url": "https://rpcs.main.stage.cldev.sh/ethereum/holesky",
     },
     "base": {
-        "json_file": "base-eth.json",
+        "json_file": "lbtc-base-eth.json",
         "rpc_url": "https://rpcs.main.stage.cldev.sh/base/sepolia",
     },
 }
