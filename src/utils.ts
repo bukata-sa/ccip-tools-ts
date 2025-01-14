@@ -172,7 +172,7 @@ function formatDate(timestamp: number) {
   return new Date(timestamp * 1e3).toISOString().substring(0, 19).replace('T', ' ')
 }
 
-function formatDuration(secs: number) {
+export function formatDuration(secs: number) {
   if (secs < 0) secs = -secs
   const time = {
     d: Math.floor(secs / 86400),

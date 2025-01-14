@@ -10,6 +10,7 @@ import {
   hexlify,
   isBytesLike,
   isHexString,
+  toBigInt,
   toUtf8Bytes,
   zeroPadValue,
 } from 'ethers'
@@ -59,12 +60,15 @@ import {
   prettyRequest,
   selectRequest,
   withDateTimestamp,
+  formatDuration,
 } from './utils.js'
+import { off } from 'process'
 
 export enum Format {
   log = 'log',
   pretty = 'pretty',
   json = 'json',
+  batch = 'batch',
 }
 
 export async function showRequests(
@@ -139,6 +143,14 @@ export async function showRequests(
       case Format.json:
         console.info(JSON.stringify(receipt, bigIntReplacer, 2))
         break
+      case Format.batch:
+        const res = {
+          id: receipt.receipt.messageId,
+          state: receipt.receipt.state,
+          duration: formatDuration(receipt.timestamp - request.timestamp),
+        }
+        console.info(JSON.stringify(res, bigIntReplacer, 2))
+        break
     }
     found = true
   }
@@ -181,6 +193,7 @@ export async function manualExec(
   }
 
   const dest = await providers.forChainId(chainIdFromSelector(request.lane.destChainSelector))
+  console.log('Destination:', dest)
 
   const commit = await fetchCommitReport(dest, request, { page: argv.page })
   const requestsInBatch = await fetchAllMessagesInBatch(
@@ -205,6 +218,7 @@ export async function manualExec(
     fromBlock: commit.log.blockNumber,
     page: argv.page,
   })
+  console.log(wallet, offRampContract.runner)
 
   if (argv.estimateGasLimit != null) {
     let estimated = await estimateExecGasForRequest(
@@ -340,60 +354,60 @@ export async function manualExecSenderQueue(
     const msgIdsToExec = [request.message.messageId]
     batches.push([commit, batch, msgIdsToExec] as const)
   }
-  console.info('Got', batches.length, 'batches to execute')
+  console.info('Got', batches.length, 'batches to execute', batches.map(([, b]) => b.length), 'msgs')
 
   const wallet = (await getWallet(argv)).connect(dest)
-
   const offRampContract = await discoverOffRamp(wallet, firstRequest.lane, {
     fromBlock: destFromBlock,
     page: argv.page,
   })
-
   for (const [i, [commit, batch, msgIdsToExec]] of batches.entries()) {
-    const manualExecReport = calculateManualExecProof(
-      batch.map(({ message }) => message),
-      firstRequest.lane,
-      msgIdsToExec,
-      commit.report.merkleRoot,
-    )
-    const requestsToExec = manualExecReport.messages.map(
-      ({ messageId }) => requests.find(({ message }) => message.messageId === messageId)!,
-    )
-    const offchainTokenData = await Promise.all(
-      requestsToExec.map(async (request) => {
-        const tx = await lazyCached(`tx ${request.log.transactionHash}`, () =>
-          source.getTransactionReceipt(request.log.transactionHash).then((res) => {
-            if (!res) throw new Error(`Tx not found: ${request.log.transactionHash}`)
-            return res
-          }),
-        )
-        return fetchOffchainTokenData({ ...request, tx })
-      }),
-    )
-    const execReport = { ...manualExecReport, offchainTokenData }
+    for (const [j, messageId] of msgIdsToExec.entries()) {
+      const manualExecReport = calculateManualExecProof(
+        batch.map(({ message }) => message),
+        firstRequest.lane,
+        [messageId],
+        commit.report.merkleRoot,
+      )
+      const requestsToExec = manualExecReport.messages.map(
+        ({ messageId }) => requests.find(({ message }) => message.messageId === messageId)!,
+      )
+      const offchainTokenData = await Promise.all(
+        requestsToExec.map(async (request) => {
+          const tx = await lazyCached(`tx ${request.log.transactionHash}`, () =>
+            source.getTransactionReceipt(request.log.transactionHash).then((res) => {
+              if (!res) throw new Error(`Tx not found: ${request.log.transactionHash}`)
+              return res
+            }),
+          )
+          return fetchOffchainTokenData({ ...request, tx })
+        }),
+      )
+      const execReport = { ...manualExecReport, offchainTokenData }
 
-    let manualExecTx
-    if (firstRequest.lane.version === CCIPVersion_1_2) {
-      const gasOverrides = manualExecReport.messages.map(() => BigInt(argv.gasLimit ?? 0))
-      manualExecTx = await offRampContract.manuallyExecute(execReport, gasOverrides)
-    } else {
-      const gasOverrides = manualExecReport.messages.map((message) => ({
-        receiverExecutionGasLimit: BigInt(argv.gasLimit ?? 0),
-        tokenGasOverrides: message.sourceTokenData.map(() => BigInt(argv.tokensGasLimit ?? 0)),
-      }))
-      manualExecTx = await offRampContract.manuallyExecute(execReport, gasOverrides)
+      let manualExecTx
+      if (firstRequest.lane.version === CCIPVersion_1_2) {
+        const gasOverrides = manualExecReport.messages.map(() => BigInt(argv.gasLimit ?? 0))
+        manualExecTx = await offRampContract.manuallyExecute(execReport, gasOverrides)
+      } else {
+        const gasOverrides = manualExecReport.messages.map((message) => ({
+          receiverExecutionGasLimit: BigInt(argv.gasLimit ?? 0),
+          tokenGasOverrides: message.sourceTokenData.map(() => BigInt(argv.tokensGasLimit ?? 0)),
+        }))
+        manualExecTx = await offRampContract.manuallyExecute(execReport, gasOverrides)
+      }
+      console.log(
+        `[${i + 1} of ${batches.length}, ${j + 1} of ${msgIdsToExec.length} msgs]`,
+        'manualExec tx =',
+        manualExecTx.hash,
+        'to =',
+        manualExecTx.to,
+        'gasLimit =',
+        manualExecTx.gasLimit,
+      )
+      await manualExecTx.wait(1, 60_000)
     }
-
-    console.log(
-      `[${i + 1} of ${batches.length}, ${batch.length} msgs]`,
-      'manualExec tx =',
-      manualExecTx.hash,
-      'to =',
-      manualExecTx.to,
-      'gasLimit =',
-      manualExecTx.gasLimit,
-    )
-  }
+}
 }
 
 type AnyMessage = Parameters<TypedContract<typeof RouterABI>['ccipSend']>[1]
@@ -413,6 +427,7 @@ export async function sendMessage(
     transferTokens?: string[]
     format: Format
     wallet?: string
+    times?: number
   },
 ) {
   const sourceChainId = isNaN(+argv.source) ? chainIdFromName(argv.source) : +argv.source
@@ -481,7 +496,7 @@ export async function sendMessage(
 
   // make sure to approve once per token, for the total amount (including fee, if needed)
   const amountsToApprove = tokenAmounts.reduce(
-    (acc, { token, amount }) => ({ ...acc, [token]: (acc[token] ?? 0n) + amount }),
+    (acc, { token, amount }) => ({ ...acc, [token]: (acc[token] ?? 0n) + toBigInt(argv.times || 1) * amount }),
     <Record<string, bigint>>{},
   )
   if (message.feeToken !== ZeroAddress) {
@@ -499,42 +514,58 @@ export async function sendMessage(
       const allowance = await contract.allowance(wallet.address, argv.router)
       if (allowance < amount) {
         // optimization: hardcode nonce and gasLimit to send all approvals in parallel without estimating
-        const tx = await contract.approve(argv.router, amount, { nonce: nonce++, gasLimit: 50_000 })
-        console.log('Approving', amount, token, 'for', argv.router, '=', tx.hash)
+        const tx = await contract.approve(argv.router, amount, { nonce: nonce++, gasLimit: 70_000 })
+        // console.log('Approving', amount, token, 'for', argv.router, '=', tx.hash)
         await tx.wait(1, 60_000)
       }
     }),
   )
 
-  const tx = await router.ccipSend(destSelector, message, {
-    nonce: nonce++,
-    // if native fee, include it in value; otherwise, it's transferedFrom feeToken
-    ...(message.feeToken === ZeroAddress ? { value: fee } : {}),
-  })
-  console.log(
-    'Sending message to',
-    receiver,
-    '@',
-    chainNameFromId(destChainId),
-    ', tx_hash =',
-    tx.hash,
-  )
+  let sendTxs = []
+  let times = argv.times || 1
+  for (let i = 0; i < times; i++) {
+    const tx = await router.ccipSend(destSelector, message, {
+      nonce: nonce++,
+      // if native fee, include it in value; otherwise, it's transferedFrom feeToken
+      ...(message.feeToken === ZeroAddress ? { value: fee } : {}),
+    })
+    sendTxs.push(tx)
+  }
+  // console.log(
+  //   'Sending message to',
+  //   receiver,
+  //   '@',
+  //   chainNameFromId(destChainId),
+  //   ', tx_hash =',
+  //   tx.hash,
+  // )
 
   // print CCIPRequest from tx receipt
-  const receipt = (await tx.wait(1, 60_000))!
-  const request = (await fetchCCIPMessagesInTx(receipt))[0]
-
-  switch (argv.format) {
-    case Format.log:
-      console.log(`message ${request.log.index} =`, withDateTimestamp(request))
-      break
-    case Format.pretty:
-      await prettyRequest(source, request)
-      break
-    case Format.json:
-      console.info(JSON.stringify(request, bigIntReplacer, 2))
-      break
-  }
+  const requests = await Promise.all(
+    sendTxs.map(async (tx) => fetchCCIPMessagesInTx((await tx.wait(1, 60_000))!)),
+  )
+  // const receipt = (await tx.wait(1, 60_000))!
+  // const request = (await fetchCCIPMessagesInTx(receipt))[0]
+  requests.forEach(async (request) => {
+    switch (argv.format) {
+      case Format.log:
+        console.log(`message ${request[0].log.index} =`, withDateTimestamp(request[0]))
+        break
+      case Format.pretty:
+        await prettyRequest(source, request[0])
+        break
+      case Format.json:
+        console.info(JSON.stringify(request[0], bigIntReplacer, 2))
+        break
+      case Format.batch:
+        let res = {
+          "id": request[0].message.messageId,
+          "tx": request[0].log.transactionHash,
+        }
+        console.info(JSON.stringify(res))
+        break
+    }
+  })
 }
 
 export async function estimateGas(
